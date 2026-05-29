@@ -3,11 +3,50 @@
   <head>
     <title>Socket.IO chat</title>
     <style>
-      body { margin: 0; padding-bottom: 3rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      body { margin: 0; padding-top: 3.25rem; padding-bottom: 3rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+      #user-settings {
+        background: rgba(255, 255, 255, 0.95);
+        border-bottom: 1px solid #ddd;
+        box-sizing: border-box;
+        display: flex;
+        gap: 0.5rem;
+        height: 3.25rem;
+        align-items: center;
+        left: 0;
+        padding: 0.5rem;
+        position: fixed;
+        right: 0;
+        top: 0;
+        z-index: 1;
+      }
+      #username-input {
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        box-sizing: border-box;
+        flex: 1;
+        max-width: 16rem;
+        padding: 0.45rem 0.6rem;
+      }
+      #username-button {
+        background: #333;
+        border: none;
+        border-radius: 3px;
+        color: #fff;
+        padding: 0.45rem 0.8rem;
+      }
+      #username-button:disabled { background: #999; cursor: not-allowed; }
       #form { background: rgba(0, 0, 0, 0.15); padding: 0.25rem; position: fixed; bottom: 0; left: 0; right: 0; display: flex; height: 3rem; box-sizing: border-box; backdrop-filter: blur(10px); }
       #input { border: none; padding: 0 1rem; flex-grow: 1; border-radius: 2rem; margin: 0.25rem; }
       #input:focus { outline: none; }
       #form > button { background: #333; border: none; padding: 0 1rem; margin: 0.25rem; border-radius: 3px; outline: none; color: #fff; }
+      #form > button:disabled { background: #999; cursor: not-allowed; }
+      #char-counter {
+        align-self: center;
+        color: #555;
+        font-size: 0.8rem;
+        min-width: 4.5rem;
+        text-align: right;
+      }
       #messages { list-style-type: none; margin: 0; padding: 0; width: 100%; }
       .message-item {
         display: flex;
@@ -38,6 +77,21 @@
         color: #555;
         margin-bottom: 0.2rem;
       }
+      .message-meta {
+        display: flex;
+        gap: 0.5rem;
+        align-items: baseline;
+        margin-bottom: 0.2rem;
+        font-size: 0.8rem;
+        color: #555;
+      }
+      .message-item.me .message-meta {
+        flex-direction: row-reverse;
+      }
+      .timestamp {
+        color: #888;
+        font-size: 0.75rem;
+      }
       .message-bubble {
         padding: 0.5rem 1rem;
         border-radius: 1rem;
@@ -62,11 +116,16 @@
     </style>
   </head>
   <body>
+    <div id="user-settings">
+      <label for="username-input">ユーザー名</label>
+      <input id="username-input" autocomplete="off" maxlength="20" />
+      <button id="username-button" type="button" disabled>変更</button>
+    </div>
     <div id="messages-container">
       <ul id="messages"></ul>
     </div>
     <form id="form" action="">
-      <input id="input" autocomplete="off" /><button>Send</button>
+      <input id="input" autocomplete="off" maxlength="200" /><span id="char-counter">0/200</span><button id="send-button" disabled>Send</button>
     </form>
     <script src="/socket.io/socket.io.js"></script>
     <script>
@@ -77,12 +136,25 @@
         clientId = Math.random().toString(36).substring(2, 15);
         sessionStorage.setItem('clientId', clientId);
       }
+      let username = sessionStorage.getItem('username');
+      if (!username) {
+        username = `ユーザ${clientId.substring(0, 6)}`;
+        sessionStorage.setItem('username', username);
+      }
       // Notify the server that a user has connected with a clientId
-      socket.emit('user connected', clientId);
+      socket.emit('user connected', { id: clientId, username });
 
+      const usernameInput = document.getElementById('username-input');
+      const usernameButton = document.getElementById('username-button');
       const form = document.getElementById('form');
       const input = document.getElementById('input');
+      const charCounter = document.getElementById('char-counter');
+      const sendButton = document.getElementById('send-button');
       const messages = document.getElementById('messages');
+      const maxMessageLength = 200;
+      const maxUsernameLength = 20;
+
+      usernameInput.value = username;
 
       function getColorFromId(id) {
         let hash = 0;
@@ -101,25 +173,104 @@
         window.scrollTo(0, document.body.scrollHeight);
       }
 
+      function getUserLabel(user) {
+        if (typeof user === 'string') {
+          return user.substring(0, 6);
+        }
+
+        if (user?.username) {
+          return user.username;
+        }
+
+        return user?.id ? user.id.substring(0, 6) : '不明なユーザ';
+      }
+
+      function formatTimestamp(sentAt) {
+        if (!sentAt) {
+          return '';
+        }
+
+        const date = new Date(sentAt);
+        if (Number.isNaN(date.getTime())) {
+          return '';
+        }
+
+        return date.toLocaleTimeString('ja-JP', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+      }
+
+      function updateCharCounter() {
+        const length = input.value.length;
+        charCounter.textContent = `${length}/${maxMessageLength}`;
+        sendButton.disabled = input.value.trim().length === 0 || length > maxMessageLength;
+      }
+
+      function updateUsernameButton() {
+        const nextUsername = usernameInput.value.trim();
+        usernameButton.disabled =
+          nextUsername.length === 0 ||
+          nextUsername.length > maxUsernameLength ||
+          nextUsername === username;
+      }
+
+      input.addEventListener('input', updateCharCounter);
+      usernameInput.addEventListener('input', updateUsernameButton);
+      usernameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          usernameButton.click();
+        }
+      });
+      usernameButton.addEventListener('click', () => {
+        const nextUsername = usernameInput.value.trim();
+        if (!nextUsername || nextUsername.length > maxUsernameLength || nextUsername === username) {
+          return;
+        }
+
+        socket.emit('username changed', nextUsername);
+      });
+
       form.addEventListener('submit', (e) => {
         e.preventDefault();
-        if (input.value) {
-          const messageData = { id: clientId, msg: input.value };
+        const messageText = input.value.trim();
+        if (messageText && messageText.length <= maxMessageLength) {
+          const messageData = { id: clientId, msg: messageText };
           socket.emit('chat message', messageData);
           input.value = '';
+          updateCharCounter();
         }
       });
 
-      socket.on('welcome', (id) => {
-        displaySystemMessage(`あなたのユーザIDは ${id.substring(0, 6)} です`);
+      updateCharCounter();
+      updateUsernameButton();
+
+      socket.on('welcome', (user) => {
+        username = getUserLabel(user);
+        usernameInput.value = username;
+        sessionStorage.setItem('username', username);
+        updateUsernameButton();
+        displaySystemMessage(`あなたのユーザー名は ${username} です`);
       });
 
-      socket.on('user joined', (id) => {
-        displaySystemMessage(`ユーザ ${id.substring(0, 6)} が参加しました`);
+      socket.on('user joined', (user) => {
+        displaySystemMessage(`${getUserLabel(user)} が参加しました`);
       });
 
-      socket.on('user left', (id) => {
-        displaySystemMessage(`ユーザ ${id.substring(0, 6)} が退出しました`);
+      socket.on('user left', (user) => {
+        displaySystemMessage(`${getUserLabel(user)} が退出しました`);
+      });
+
+      socket.on('username changed', (user) => {
+        if (user.id === clientId) {
+          username = user.username;
+          usernameInput.value = username;
+          sessionStorage.setItem('username', username);
+          updateUsernameButton();
+        }
+
+        displaySystemMessage(`${user.oldUsername} が ${user.username} に名前を変更しました`);
       });
 
       socket.on('chat message', (data) => {
@@ -141,15 +292,27 @@
         const messageContent = document.createElement('div');
         messageContent.classList.add('message-content');
 
-        const username = document.createElement('div');
+        const messageMeta = document.createElement('div');
+        messageMeta.classList.add('message-meta');
+
+        const username = document.createElement('span');
         username.classList.add('username');
-        username.textContent = data.id.substring(0, 6);
+        username.textContent = data.username || data.id.substring(0, 6);
+
+        const timestamp = document.createElement('span');
+        timestamp.classList.add('timestamp');
+        timestamp.textContent = formatTimestamp(data.sentAt);
 
         const messageBubble = document.createElement('div');
         messageBubble.classList.add('message-bubble');
         messageBubble.textContent = data.msg;
 
-        messageContent.appendChild(username);
+        messageMeta.appendChild(username);
+        if (timestamp.textContent) {
+          messageMeta.appendChild(timestamp);
+        }
+
+        messageContent.appendChild(messageMeta);
         messageContent.appendChild(messageBubble);
 
         item.appendChild(userIcon);
